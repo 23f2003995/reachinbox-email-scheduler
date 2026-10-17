@@ -1,0 +1,70 @@
+// Prisma schema for ReachInbox Email Scheduler
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite" // Can be switched to "postgresql" when running with Postgres
+  url      = env("DATABASE_URL")
+}
+
+model Email {
+  id                 String    @id @default(uuid())
+  senderEmail        String
+  recipientEmail     String
+  subject            String
+  body               String
+  status             String    @default("SCHEDULED") // SCHEDULED, QUEUED, PROCESSING, SENT, FAILED, RATE_LIMITED
+  scheduledAt        DateTime
+  sentAt             DateTime?
+  delaySeconds       Int       @default(2)
+  hourlyLimit        Int       @default(50)
+  jobId              String?   @unique
+  etherealPreviewUrl String?
+  errorMessage       String?
+  batchId            String?
+  retryCount         Int       @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([senderEmail])
+  @@index([recipientEmail])
+}
+
+model SenderAccount {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  hourlyLimit  Int      @default(50)
+  delaySeconds Int      @default(2)
+  etherealUser String?
+  etherealPass String?
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model SlackIntegration {
+  id             String    @id @default(uuid())
+  tenantId       String    @unique @default("default-tenant")
+  webhookUrl     String?
+  accessToken    String?
+  channel        String?
+  isConnected    Boolean   @default(false)
+  lastNotifiedAt DateTime?
+  updatedAt      DateTime  @updatedAt
+}
+
+model RateLimitHistory {
+  id             String   @id @default(uuid())
+  senderEmail    String
+  windowStart    DateTime
+  count          Int      @default(1)
+  notifiedSlack  Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@unique([senderEmail, windowStart])
+}
