@@ -188,23 +188,40 @@ Open your browser at **`http://localhost:3000`**.
 
 ---
 
-## 🔑 Environment Variables Reference
+## 🔑 Environment Variables & Ethereal Email Setup
 
-### Backend (`backend/.env`)
+### How to Set Up Ethereal Email
+
+[Ethereal Email](https://ethereal.email) is a fake SMTP service used for testing email deliverability without sending real emails. In this project:
+1. **Automatic Provisioning (Zero Manual Setup)**:
+   - When you run `npm run seed` in the backend, the backend automatically calls `nodemailer.createTestAccount()` to generate valid, isolated Ethereal SMTP sender credentials on the fly.
+   - The credentials (`user`, `pass`, `smtp.ethereal.email`) are saved securely into the database under the `Sender` table.
+2. **Custom / Static Ethereal Accounts**:
+   - If you want to use a specific Ethereal account, you can create one at [ethereal.email/create](https://ethereal.email/create) and provide it via the seed script or directly in `.env`.
+3. **Live Web Previews**:
+   - Every time an email is dispatched by the worker, `nodemailer.getTestMessageUrl(info)` returns a unique preview URL (e.g. `https://ethereal.email/message/WaQK...`).
+   - This URL is stored in the database and displayed as a clickable **"View Sent Email"** link in the dashboard's **Sent Emails** table.
+
+---
+
+### Backend Environment Variables (`backend/.env`)
+
+Copy `backend/.env.example` or create `backend/.env`:
+
 ```env
 PORT=5000
 NODE_ENV=development
 
-# Database (SQLite for zero-config local run, or PostgreSQL for Docker)
+# Database: SQLite for zero-config local run, or PostgreSQL for Docker
 DATABASE_URL="file:./dev.db"
 # DATABASE_URL="postgresql://postgres:postgrespassword@localhost:5432/reachinbox?schema=public"
 
-# Redis (BullMQ queue backend)
+# Redis: BullMQ persistent queue & rate limiter backend
 REDIS_HOST=localhost
 REDIS_PORT=6380
 REDIS_PASSWORD=
 
-# BullMQ Settings
+# BullMQ Configuration
 EMAIL_QUEUE_NAME=reachinbox-email-queue
 WORKER_CONCURRENCY=5
 
@@ -212,18 +229,19 @@ WORKER_CONCURRENCY=5
 DEFAULT_DELAY_BETWEEN_EMAILS_SECONDS=2
 DEFAULT_MAX_EMAILS_PER_HOUR=20
 
-# Elasticsearch Search Engine
+# Elasticsearch Search Engine (with automatic relational DB fallback)
 ELASTICSEARCH_NODE=http://localhost:9200
 ELASTICSEARCH_INDEX=reachinbox_emails
 
-# Slack Integration (Webhook or OAuth)
+# Slack Alert Integration (Incoming Webhook or OAuth 2.0)
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 SLACK_CLIENT_ID=
 SLACK_CLIENT_SECRET=
 SLACK_REDIRECT_URI=http://localhost:5000/api/slack/oauth/callback
 ```
 
-### Frontend (`frontend/.env`)
+### Frontend Environment Variables (`frontend/.env`)
+
 ```env
 VITE_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 ```
@@ -309,8 +327,54 @@ reachinbox-scheduler/
 
 ---
 
+## ⚖️ Assumptions, Shortcuts, and Trade-Offs
+
+Per assignment guidelines, here are the architectural decisions, trade-offs, and assumptions made:
+
+### 1. Persistent Delayed Queues vs. OS Crons
+- **Design Decision**: Completely avoided cron jobs (`node-cron`, system crons). Used **BullMQ + Redis sorted sets** (`zadd` with epoch score).
+- **Rationale**: Crons poll repeatedly (e.g. every minute) and introduce polling lag and split-brain race conditions when scaled across multiple nodes. BullMQ delayed jobs are pushed once, stored persistently in Redis, and pop exactly when the timer expires.
+- **Trade-Off**: Requires a running Redis instance as a core dependency.
+
+### 2. Dual Database Strategy (SQLite for Zero-Config Dev, PostgreSQL for Prod)
+- **Design Decision**: Configured Prisma with dual schemas: default SQLite for instant, zero-setup local evaluation, and PostgreSQL schema for production / Docker Compose.
+- **Rationale**: Reviewers can clone and run `npm run dev` immediately without needing to install, configure, or migrate a local PostgreSQL server.
+- **Trade-Off**: SQLite does not support native concurrent writes under high distributed scale; PostgreSQL is provided in `docker-compose.yml` for production deployments.
+
+### 3. Rate Limit Handling: Reschedule vs. Drop
+- **Design Decision**: When a sender hits the hourly quota, excess emails are **rescheduled to the next hourly window** rather than marked as failed or dropped.
+- **Rationale**: In real email marketing engines (like ReachInbox), emails are high-value leads; dropping them loses business.
+- **Trade-Off**: Queue latency increases for deferred jobs, which is communicated immediately to the user via real-time Slack alerts.
+
+### 4. Elasticsearch Multi-Match with Resilient DB Fallback
+- **Design Decision**: Built a dual-layer search: tries Elasticsearch cluster first; if offline or unavailable, automatically falls back to SQL queries (`LIKE` / full-text).
+- **Rationale**: Ensures the search bar and dashboard function 100% reliably even if Elasticsearch is not running locally.
+
+---
+
+## 🎥 Demo Video Walkthrough Guide (Under 5 Minutes)
+
+Use this checklist during the video walkthrough:
+1. **Show scheduling emails**: Open Compose modal, paste or upload lead CSV, set a scheduled delay (e.g., 1 minute), click Schedule.
+2. **Show Dashboard tables**: Show emails in the **Scheduled Emails** table with countdown timer and metadata.
+3. **Show Restart Resilience**:
+   - Schedule an email with a 2-minute delay.
+   - Stop backend server (`Ctrl + C`).
+   - Start backend server again (`npm run dev`).
+   - Observe the email still fires precisely on time and transitions to **Sent Emails** without duplicate dispatches!
+4. **Demonstrate Rate Limiting & Pacing Under Load**:
+   - Show the 2-second delay throttle between consecutive dispatches.
+   - Show how exceeding hourly limits defers jobs and triggers a real-time Slack webhook alert.
+5. **Ethereal Email Preview**:
+   - Open **Sent Emails** table and click the Ethereal preview link to show the actual rendered email in the browser.
+6. **BullMQ Live Queue Inspector**:
+   - Open `http://localhost:5000/admin/queues` to inspect live BullMQ queue stats.
+
+---
+
 ## 👥 Repository & Submission Details
 
 - **Assignees**: Grant access to GitHub users `Mitrajit` and `Yadav036`.
 - **Author**: Software Development Intern Candidate.
 - **Assignment**: Full-Stack Email Job Scheduler for [ReachInbox.ai](https://reachinbox.ai).
+
